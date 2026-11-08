@@ -24,3 +24,8 @@ npm run dev
 
 ## Deploy บน Vercel
 Import GitHub repo → ใส่ Environment Variables ตาม `.env.example` → Deploy
+
+## รูปภาพและสติกเกอร์
+- **รับจากลูกค้า:** แสดงรูปและสติกเกอร์ในแชท รูปดึงผ่าน `/api/media/<id>` (proxy ไป LINE Content API ด้วย access token ฝั่ง server) — LINE เก็บไฟล์ไว้ชั่วคราว รูปที่หมดอายุจะแสดงเป็นป้าย `[รูปภาพ]` แทน
+- **ส่งจากเว็บ:** ปุ่มแนบรูป (JPEG/PNG ≤ 1MB, รูปใหญ่ย่อให้อัตโนมัติ) อัปโหลดไป **Vercel Blob** ผ่าน `/api/upload` แล้ว push เป็น image message ต้องตั้ง `BLOB_READ_WRITE_TOKEN` (Vercel → Storage → Create → Blob แบบ public) ถ้าไม่ตั้ง ปุ่มแนบรูปจะแจ้งว่าส่งรูปไม่ได้ ส่วนการรับรูป/สติกเกอร์ไม่ต้องใช้
+- `/api/send` ยอมรับ `imageUrl` เฉพาะ URL ของ Blob ที่อัปโหลดผ่านระบบ (กันสั่งให้ LINE ดึงรูปจากที่อื่น)

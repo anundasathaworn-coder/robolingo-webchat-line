@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MAX_IMAGE_BYTES, stickerImageUrl } from "@/lib/media";
 import type { ChatMessage, Conversation } from "@/lib/types";
 
 const POLL_MS = 2500;
@@ -12,6 +13,37 @@ function Avatar({ c }: { c: Conversation }) {
   // eslint-disable-next-line @next/next/no-img-element
   if (c.pictureUrl) return <img className="avatar" src={c.pictureUrl} alt="" />;
   return <div className="avatar">{c.displayName.charAt(0).toUpperCase()}</div>;
+}
+
+/** ย่อรูปใหญ่ให้ ≤ 1MB (LINE จำกัด preview) ด้วย canvas ก่อนอัปโหลด; รูปเล็กอยู่แล้วส่งตามเดิม */
+async function prepareImage(file: File): Promise<File> {
+  if (file.size <= MAX_IMAGE_BYTES * 0.9) return file;
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/jpeg", 0.8));
+  if (!blob || blob.size > MAX_IMAGE_BYTES) throw new Error("รูปใหญ่เกินไป ลองใช้รูปที่เล็กลง");
+  return new File([blob], "photo.jpg", { type: "image/jpeg" });
+}
+
+/** เนื้อหาของ bubble: ข้อความ / รูป / สติกเกอร์ (ถ้ารูปโหลดไม่ได้ เช่น หมดอายุที่ LINE จะแสดงป้ายกำกับแทน) */
+function Content({ m }: { m: ChatMessage }) {
+  const [failed, setFailed] = useState(false);
+  const src = m.kind === "sticker" ? stickerImageUrl(m.stickerId) : m.kind === "image" ? m.imageUrl : null;
+  if (!src || failed) return <>{m.text}</>;
+  if (m.kind === "sticker") {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img className="sticker" src={src} alt="สติกเกอร์" onError={() => setFailed(true)} />;
+  }
+  return (
+    <a href={src} target="_blank" rel="noreferrer">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="photo" src={src} alt="รูปภาพ" onError={() => setFailed(true)} />
+    </a>
+  );
 }
 
 export default function Home() {
@@ -55,6 +87,33 @@ export default function Home() {
     setMessages([]);
     setError("");
     loadMsgs(id);
+  };
+
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const sendImage = async (file: File) => {
+    if (!selected) return;
+    setSending(true);
+    setError("");
+    try {
+      const body = new FormData();
+      body.append("file", await prepareImage(file));
+      const up = await fetch("/api/upload", { method: "POST", body });
+      const upData = await up.json();
+      if (!up.ok) throw new Error(upData.error ?? "อัปโหลดไม่สำเร็จ");
+      const r = await fetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: selected, imageUrl: upData.url }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error ?? "ส่งไม่สำเร็จ");
+      loadMsgs(selected);
+      loadConvs();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSending(false);
+    }
   };
 
   const send = async (e: React.FormEvent) => {
@@ -125,8 +184,8 @@ export default function Home() {
             </div>
             <div className="messages">
               {messages.map((m) => (
-                <div key={m.id} className={`bubble ${m.direction}`}>
-                  {m.text}
+                <div key={m.id} className={`bubble ${m.direction}${m.kind === "sticker" ? " bare" : ""}`}>
+                  <Content m={m} />
                   <time>{fmt(m.timestamp)}</time>
                 </div>
               ))}
@@ -134,6 +193,29 @@ export default function Home() {
             </div>
             {error && <div className="err">{error}</div>}
             <form className="composer" onSubmit={send}>
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/jpeg,image/png"
+                hidden
+                data-testid="image-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) sendImage(f);
+                }}
+              />
+              <button
+                type="button"
+                className="attach"
+                aria-label="แนบรูปภาพ"
+                disabled={sending}
+                onClick={() => fileInput.current?.click()}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
               <input
                 value={text}
                 onChange={(e) => setText(e.target.value)}
